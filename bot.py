@@ -78,7 +78,9 @@ async def fetch_answer(question: str) -> str:
 
 # Обработка команды /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = "Привет! Я бот CatSearch и я отвечаю на вопросы по внутренней базе знаний. Задай вопрос, и я найду ответ. Примеры:"
+    logger.info(f"User {update.effective_user.id} started the conversation.")
+    
+    text = "Привет! Я бот CatSearch и я отвечаю на вопросы на основе базы знаний! Задай вопрос и я постараюсь найти ответ. Для отмены диалога нажмите /cancel. Примеры вопросов:"
     examples_keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("Что ты знаешь про Нэнси?", callback_data="sample_1")],
         [InlineKeyboardButton("Назови лучшие экспонаты Лувра!", callback_data="sample_2")],
@@ -87,22 +89,26 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, reply_markup=examples_keyboard)
     return QUESTION
 
-# Обработка выбора "Задать вопрос"
-async def ask_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = "Привет! Задай вопрос, и я найду ответ. Примеры:"
-    examples_keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("Что ты знаешь про Нэнси?", callback_data="sample_1")],
-        [InlineKeyboardButton("Назови лучшие экспонаты Лувра!", callback_data="sample_2")],
-        [InlineKeyboardButton("Кто совершил хладнокровное убийство?", callback_data="sample_3")],
-    ])
-    await update.message.reply_text(text, reply_markup=examples_keyboard)
-    return QUESTION
 
 # Обработка текстового вопроса
 async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Backend Answer: {
+        'query_id': '65141426-71fb-49e8-9cc4-a458af66d7ed', 
+        'query_text': 'Назови лучшие экспонаты Лувра\\!', 
+        'timestamp': '2025-04-21T16:35:54.416034+00:00', 
+        'vectordb_doc_count': 5, 
+        'vdb_latency': 0.08878185499634128, 
+        'llm_latency': 0.995448645997385, 
+        'latency': 1.08455, 
+        'response_text': 'Лучшие экспонаты Лувра включают в себя такие шедевры, как «Мона Лиза» Леонардо да Винчи и «Венера Милосская». Также стоит упомянуть огромное собрание произведений древнего Египта, которое является одним из самых значительных в мире.'
+        }
+    """
+
     question: str = ''
     if update and update.message:
         question = update.message.text
+        logger.info(f"User {update.effective_user.id} asked: {question}")
     else:
         question = context.user_data['current_question']
 
@@ -110,65 +116,97 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id=update.effective_chat.id, 
         action=ChatAction.TYPING
     )
-    await update.message.reply_text("🔍 Ищу ответ...")
+    await update.message.reply_text(f"🔍 Ищу ответ на вопрос: \t*{question}*", parse_mode="MarkdownV2")
+
+    await context.bot.send_chat_action(
+        chat_id=update.effective_chat.id, 
+        action=ChatAction.TYPING
+    )
 
     answer: dict = await fetch_answer(question)
 
-    await update.message.reply_text(
-        "🤖 Ответ: " + answer.get("response_text", "Ошибка: ответ не распознан."), 
-        # reply_markup=keyboard,
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id, 
+        text=f"🤖 Ответ: \n\n" + answer.get("response_text")
         )
     
-    rag_keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("RAG Вопрос 1", callback_data="rag_callback")],
-        [InlineKeyboardButton("RAG Вопрос 2", callback_data="rag_callback")],
-        [InlineKeyboardButton("RAG Вопрос 3", callback_data="rag_callback")],
-    ])
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id, 
+        parse_mode="MarkdownV2",
+        text=f"""
+    `Метаданные:`
+    `query_id: {answer.get("query_id")}`
+    `query_text: {answer.get("query_text")}`
+    `timestamp: {answer.get("timestamp")}`
+    `vectordb_doc_count: {answer.get("vectordb_doc_count")}`
+    `vdb_latency: {answer.get("vdb_latency"):.2f}`
+    `llm_latency: {answer.get("llm_latency"):.2f}`
+    `latency: {answer.get("latency")}`
+        """)
+        
 
-    await update.message.reply_text(
-        "🤖 Возможно вам будет интересно следующее: ",
-        reply_markup=rag_keyboard,
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id, 
+        text="🤖 Вы можете задать следующий вопрос!", 
         )
 
     return QUESTION
 
 async def handle_sample_questions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Backend Answer: {
+        'query_id': '65141426-71fb-49e8-9cc4-a458af66d7ed', 
+        'query_text': 'Назови лучшие экспонаты Лувра\\!', 
+        'timestamp': '2025-04-21T16:35:54.416034+00:00', 
+        'vectordb_doc_count': 5, 
+        'vdb_latency': 0.08878185499634128, 
+        'llm_latency': 0.995448645997385, 
+        'latency': 1.08455, 
+        'response_text': 'Лучшие экспонаты Лувра включают в себя такие шедевры, как «Мона Лиза» Леонардо да Винчи и «Венера Милосская». Также стоит упомянуть огромное собрание произведений древнего Египта, которое является одним из самых значительных в мире.'
+        }
+    """
+
+
     query = update.callback_query
     await query.answer()
 
-    # Определите текст вопроса по callback_data
     sample_questions = {
         "sample_1": "Что ты знаешь про Нэнси?",
-        "sample_2": "Назови лучшие экспонаты Лувра\!",
+        "sample_2": "Назови лучшие экспонаты Лувра",
         "sample_3": "Кто совершил хладнокровное убийство?"
     }
     question = sample_questions.get(query.data, "Неизвестный вопрос")
 
     context.user_data['current_question'] = question  # Сохраняем вопрос в контексте
 
-    await query.edit_message_text(f"🔍 Ищу ответ на вопрос: *{question}*", parse_mode="MarkdownV2")
-    
-    # Эмулируем ввод вопроса пользователем
-    # return await handle_question(update, context)
+    await query.edit_message_text(f"🔍 Ищу ответ на вопрос:\t*{question}*", parse_mode="MarkdownV2")
 
     answer: dict = await fetch_answer(question)
 
-    await query.edit_message_text(
-        f"Вопрос: {question}" \
-        + "\n\n" \
-        "🤖 Ответ: " + answer.get("response_text", "Ошибка: ответ не распознан."), 
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id, 
+        text=f"🤖 Ответ: \n\n" + answer.get("response_text")
         )
     
-    rag_keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("RAG Вопрос 1", callback_data="rag_callback")],
-        [InlineKeyboardButton("RAG Вопрос 2", callback_data="rag_callback")],
-        [InlineKeyboardButton("RAG Вопрос 3", callback_data="rag_callback")],
-    ])
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id, 
+        parse_mode="MarkdownV2",
+        text=f"""
+    `Метаданные:`
+    `query_id: {answer.get("query_id")}`
+    `query_text: {answer.get("query_text")}`
+    `timestamp: {answer.get("timestamp")}`
+    `vectordb_doc_count: {answer.get("vectordb_doc_count")}`
+    `vdb_latency: {answer.get("vdb_latency"):.2f}`
+    `llm_latency: {answer.get("llm_latency"):.2f}`
+    `latency: {answer.get("latency")}`
+        """)
+        
 
     await context.bot.send_message(
         chat_id=update.effective_chat.id, 
-        text="🤖 Возможно вам будет интересно следующее: ", 
-        reply_markup=rag_keyboard)
+        text="🤖 Вы можете задать следующий вопрос!", 
+        )
 
     return QUESTION
 
@@ -208,11 +246,11 @@ def main():
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
-            # START: [MessageHandler(filters.Regex("^Задать вопрос$"), ask_question)],
             QUESTION: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_question),
                 CallbackQueryHandler(handle_sample_questions, pattern="^sample_"),  # Обработчик для примеров
                 CallbackQueryHandler(cancel, pattern="^cancel"),
+                CommandHandler("start", start),
             ],
             CONTINUE: [
                 MessageHandler(filters.Regex("^Новый вопрос$"), continue_conversation),
@@ -220,7 +258,6 @@ def main():
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
-        per_message=True,
     )
 
     app.add_handler(conv_handler)
